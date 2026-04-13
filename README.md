@@ -1,0 +1,93 @@
+# CookieSpy 🕵️
+
+> A browser extension for Chrome and Edge that gives you real-time, per-tab visibility into first-party cookies, third-party cookies, and external network connections — with IP geolocation.
+
+![Manifest V3](https://img.shields.io/badge/Manifest-V3-0ea5e9?style=flat-square)
+![Chrome](https://img.shields.io/badge/Chrome-supported-22c55e?style=flat-square&logo=googlechrome&logoColor=white)
+![Edge](https://img.shields.io/badge/Edge-supported-22c55e?style=flat-square&logo=microsoftedge&logoColor=white)
+![Privacy](https://img.shields.io/badge/No_data_stored-8b5cf6?style=flat-square)
+
+---
+
+## What it does
+
+When you visit a page, CookieSpy immediately shows you:
+
+- **First-party cookies** — cookies set by the site you're visiting
+- **Third-party cookies** — cookies from domains other than the current site
+- **External connections** — every external domain the page contacts, with request count
+- **IP geolocation** — each external domain's IP address, country, city, and organisation (ISP/CDN/cloud provider)
+
+The toolbar badge updates live as the page loads additional resources, colour-coded by severity:
+
+| Badge | Meaning |
+|-------|---------|
+| 🟢 Green | No external tracking detected |
+| 🟡 Amber | 1–5 external connections |
+| 🔴 Red | 6+ external connections |
+
+---
+
+## Privacy by design
+
+- **No storage** — all data is held in memory and cleared when you navigate away or close the tab
+- **No history** — nothing is written to `localStorage`, `chrome.storage`, or any external service
+- **Per-tab isolation** — each tab has independent state that never bleeds across tabs
+- **One external call** — geolocation uses `ipwho.is` (free HTTPS, no API key), queried once per unique domain with in-memory caching
+
+---
+
+## Tech stack
+
+- **Manifest V3** (Chrome/Edge compatible)
+- `chrome.cookies` API — cookie enumeration and change events
+- `chrome.webRequest` API — outbound request interception per tab
+- `chrome.webNavigation` API — navigation lifecycle management
+- `ipwho.is` — free geolocation API (HTTPS, no key required)
+- Vanilla JS, zero dependencies
+
+---
+
+## Installation (Developer Mode)
+
+CookieSpy is a sideloaded developer extension — no Chrome Web Store required.
+
+### Chrome
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **"Load unpacked"**
+4. Select the `cookiespy-extension` folder
+5. Pin it from the Extensions menu
+
+### Microsoft Edge
+1. Open `edge://extensions`
+2. Enable **Developer mode** (left sidebar)
+3. Click **"Load unpacked"**
+4. Select the `cookiespy-extension` folder
+5. Pin it to the toolbar
+
+---
+
+## Project structure
+
+```
+cookiespy-extension/
+├── manifest.json          # MV3 extension manifest
+├── background.js          # Service worker — tracking logic, badge, geo lookup
+├── popup/
+│   ├── popup.html         # Extension popup UI
+│   ├── popup.css          # Dark-themed styles
+│   └── popup.js           # Popup data fetch & live rendering
+└── icons/
+    ├── icon16.png
+    ├── icon48.png
+    └── icon128.png
+```
+
+---
+
+## Background
+
+CookieSpy was built as a practical security tool to demonstrate real-world browser privacy concepts: cookie classification, third-party tracking detection, and network connection analysis. The same threat model underpins enterprise browser security controls in products like Microsoft Defender for Cloud Apps and network proxy solutions.
+
+Built by **Tom Clark** — Cyber Security & Platform Engineer · [cloudsecurity.global](https://cloudsecurity.global)

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CookieSpy</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <img src="../icons/icon48.png" alt="CookieSpy" width="24" height="24" />
+      <span class="logo-text">Cookie<span class="logo-accent">Spy</span></span>
+    </div>
+    <div id="main-domain" class="domain-badge">—</div>
+  </header>
+
+  <!-- Stat cards -->
+  <section class="stats">
+    <div class="stat-card stat-first">
+      <div class="stat-value" id="count-first">0</div>
+      <div class="stat-label">First-Party<br>Cookies</div>
+    </div>
+    <div class="stat-card stat-third">
+      <div class="stat-value" id="count-third">0</div>
+      <div class="stat-label">Third-Party<br>Cookies</div>
+    </div>
+    <div class="stat-card stat-domains">
+      <div class="stat-value" id="count-domains">0</div>
+      <div class="stat-label">External<br>Connections</div>
+    </div>
+  </section>
+
+  <!-- Domain list -->
+  <section class="domains-section">
+    <div class="section-header">
+      <span class="section-title">External Domains</span>
+      <span class="section-hint" id="section-hint"></span>
+    </div>
+
+    <div id="domain-list" class="domain-list">
+      <div class="empty-state" id="empty-state">
+        <span class="empty-icon">🔍</span>
+        <span>No external connections yet</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <span class="footer-note">No data stored · Per-tab only</span>
+    <a class="footer-link" href="https://cloudsecurity.global" target="_blank">cloudsecurity.global</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
