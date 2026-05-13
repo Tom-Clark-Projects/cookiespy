@@ -105,7 +105,42 @@ header {
   background: var(--bg-card);
   text-align: center;
   gap: 4px;
+  /* Each card acts as a tab — make that obvious to mouse and keyboard users. */
+  cursor: pointer;
+  position: relative;
+  user-select: none;
+  transition: background 0.15s;
 }
+
+.stat-card:hover {
+  background: var(--bg-row);
+}
+
+.stat-card:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+/* Active-tab indicator: a coloured underline that matches the card's accent.
+   Sits flush with the bottom border of the .stats grid so the line reads as
+   "this list belongs to that card". */
+.stat-card.active {
+  background: var(--bg-row);
+}
+
+.stat-card.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px; /* cover the 1px grid gap so the line meets the list below */
+  height: 2px;
+  background: var(--text-secondary);
+}
+
+.stat-first.active::after   { background: var(--brand-light); }
+.stat-third.active::after   { background: var(--trim-light); }
+.stat-domains.active::after { background: var(--amber); }
 
 .stat-value {
   font-size: 26px;

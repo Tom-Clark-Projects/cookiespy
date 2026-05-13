@@ -17,10 +17,11 @@
  * TabState {
  *   mainDomain: string           - root domain of the current page
  *   mainUrl:    string           - full URL of the current page
- *   firstParty: Set<string>      - unique first-party cookie identifiers
- *   thirdParty: Set<string>      - unique third-party cookie identifiers
+ *   firstParty: Map<id, Cookie>  - unique first-party cookies (id = "domain::name")
+ *   thirdParty: Map<id, Cookie>  - unique third-party cookies (id = "domain::name")
  *   domains:    Map<string, DomainInfo>  - external domains seen
  * }
+ * Cookie     { domain, name }
  * DomainInfo { count, ip, location, flag, org }
  */
 const tabData = new Map();
@@ -57,8 +58,10 @@ function initTab(tabId) {
     tabData.set(tabId, {
       mainDomain: '',
       mainUrl: '',
-      firstParty: new Set(),
-      thirdParty: new Set(),
+      // Keyed by "domain::name" so re-classifying the same cookie is idempotent,
+      // but the value holds the structured fields the popup needs to render.
+      firstParty: new Map(),
+      thirdParty: new Map(),
       domains: new Map(),
     });
   }
@@ -180,11 +183,13 @@ async function loadExistingCookies(tabId, url) {
 }
 
 function classifyCookie(data, cookieDomain, cookieName, mainDomain) {
-  const id = `${cookieDomain.replace(/^\./, '')}::${cookieName}`;
+  const cleanDomain = cookieDomain.replace(/^\./, '');
+  const id    = `${cleanDomain}::${cookieName}`;
+  const entry = { domain: cleanDomain, name: cookieName };
   if (isThirdParty(cookieDomain, mainDomain || data.mainDomain)) {
-    data.thirdParty.add(id);
+    data.thirdParty.set(id, entry);
   } else {
-    data.firstParty.add(id);
+    data.firstParty.set(id, entry);
   }
 }
 
@@ -291,10 +296,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // Sort cookies alphabetically by name (then by domain) so the user gets a
+  // stable, scannable list rather than insertion order.
+  const cookieSort = (a, b) =>
+    a.name.localeCompare(b.name) || a.domain.localeCompare(b.domain);
+
   sendResponse({
     mainDomain: data.mainDomain,
-    firstParty: data.firstParty.size,
-    thirdParty: data.thirdParty.size,
+    firstParty: Array.from(data.firstParty.values()).sort(cookieSort),
+    thirdParty: Array.from(data.thirdParty.values()).sort(cookieSort),
     domains: Array.from(data.domains.entries()).map(([domain, info]) => ({
       domain,
       ...info,

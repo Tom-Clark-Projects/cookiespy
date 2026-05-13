@@ -17,35 +17,39 @@
     <div id="main-domain" class="domain-badge">—</div>
   </header>
 
-  <!-- Stat cards -->
-  <section class="stats">
-    <div class="stat-card stat-first">
+  <!--
+    Stat cards double as tabs: clicking one switches the list below to that
+    category. role="tab" + tabindex makes them keyboard-focusable; the active
+    card is reflected via the .active class and aria-selected for screen
+    readers. The default active tab is set in popup.js.
+  -->
+  <section class="stats" role="tablist" aria-label="Cookie and connection categories">
+    <div class="stat-card stat-first" role="tab" tabindex="0" data-view="first" aria-controls="domain-list" aria-selected="false">
       <div class="stat-value" id="count-first">0</div>
       <div class="stat-label">First-Party<br>Cookies</div>
     </div>
-    <div class="stat-card stat-third">
+    <div class="stat-card stat-third" role="tab" tabindex="0" data-view="third" aria-controls="domain-list" aria-selected="false">
       <div class="stat-value" id="count-third">0</div>
       <div class="stat-label">Third-Party<br>Cookies</div>
     </div>
-    <div class="stat-card stat-domains">
+    <div class="stat-card stat-domains" role="tab" tabindex="0" data-view="domains" aria-controls="domain-list" aria-selected="true">
       <div class="stat-value" id="count-domains">0</div>
       <div class="stat-label">External<br>Connections</div>
     </div>
   </section>
 
-  <!-- Domain list -->
+  <!-- List section. Title and hint update based on the active tab. -->
   <section class="domains-section">
     <div class="section-header">
-      <span class="section-title">External Domains</span>
+      <span class="section-title" id="section-title">External Domains</span>
       <span class="section-hint" id="section-hint"></span>
     </div>
 
-    <div id="domain-list" class="domain-list">
-      <div class="empty-state" id="empty-state">
-        <span class="empty-icon">🔍</span>
-        <span>No external connections yet</span>
-      </div>
-    </div>
+    <!--
+      Populated by popup.js. Initial empty-state is built dynamically per
+      active tab so the icon and copy match the category (cookies vs domains).
+    -->
+    <div id="domain-list" class="domain-list" role="tabpanel"></div>
   </section>
 
   <!-- Footer -->
