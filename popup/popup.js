@@ -11,10 +11,11 @@ const elDomain       = document.getElementById('main-domain');
 const elFirst        = document.getElementById('count-first');
 const elThird        = document.getElementById('count-third');
 const elDomains      = document.getElementById('count-domains');
-const elDomainList   = document.getElementById('domain-list');
-const elSectionTitle = document.getElementById('section-title');
-const elSectionHint  = document.getElementById('section-hint');
-const elStatCards    = document.querySelectorAll('.stat-card');
+const elDomainList    = document.getElementById('domain-list');
+const elSectionTitle  = document.getElementById('section-title');
+const elSectionHint   = document.getElementById('section-hint');
+const elColumnLabels  = document.getElementById('column-labels');
+const elStatCards     = document.querySelectorAll('.stat-card');
 
 
 // ─── View state ──────────────────────────────────────────────────────────────
@@ -268,6 +269,10 @@ function renderActiveView() {
     card.classList.toggle('active', isActive);
     card.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
+
+  // Column-header strip only makes sense for the domains list, where each
+  // row carries a score pill and a request-count pill. Cookies have neither.
+  elColumnLabels.classList.toggle('visible', activeView === 'domains');
 
   if (!lastData) return;
 

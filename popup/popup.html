@@ -46,6 +46,19 @@
     </div>
 
     <!--
+      Column-header strip. Mirrors the .domain-row grid so the labels sit
+      directly above the threat-score and request-count pills. Only shown
+      when the External Connections tab is active (cookies have no pills).
+      The two empty spans are intentional spacers for the flag + info cells.
+    -->
+    <div id="column-labels" class="column-labels" aria-hidden="true">
+      <span></span>
+      <span></span>
+      <span class="col-label" title="Threat-intel score (0 safe, 100 high risk)">Score</span>
+      <span class="col-label" title="Number of requests this tab has made to this domain">Reqs</span>
+    </div>
+
+    <!--
       Populated by popup.js. Initial empty-state is built dynamically per
       active tab so the icon and copy match the category (cookies vs domains).
     -->
