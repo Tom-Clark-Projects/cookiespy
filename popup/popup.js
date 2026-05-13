@@ -105,6 +105,45 @@ function buildCookieRow(item) {
   return row;
 }
 
+/**
+ * Build a small coloured pill showing the threat score for a domain.
+ *
+ * States:
+ *   null / undefined  -> dim "…" pill while the lookup is in flight
+ *   level 'unknown'   -> grey dash, no score (lookup completed with no signal)
+ *   level 'safe'      -> green
+ *   level 'caution'   -> amber
+ *   level 'high'      -> red
+ *
+ * Hovering the pill reveals the source breakdown via the title attribute.
+ */
+function buildThreatBadge(threat) {
+  const pill = document.createElement('span');
+  pill.className = 'row-threat';
+
+  if (!threat) {
+    pill.classList.add('pending');
+    pill.textContent = '…';
+    pill.title = 'Checking threat intelligence…';
+    return pill;
+  }
+
+  if (threat.level === 'unknown') {
+    pill.classList.add('unknown');
+    pill.textContent = '–';
+    pill.title = threat.evidence || 'No threat-intel signal available';
+    return pill;
+  }
+
+  pill.classList.add(threat.level); // safe / caution / high
+  pill.textContent = String(threat.score);
+  const sourceList = threat.sources?.length
+    ? `\nSources: ${threat.sources.join(', ')}`
+    : '';
+  pill.title = `Threat score ${threat.score}/100 (${threat.level})\n${threat.evidence || ''}${sourceList}`.trim();
+  return pill;
+}
+
 /** Build a single domain row element */
 function buildDomainRow(item) {
   const row = document.createElement('div');
@@ -145,6 +184,9 @@ function buildDomainRow(item) {
   info.appendChild(domainEl);
   info.appendChild(meta);
 
+  // Threat-score badge sits before the count so the eye lands on risk first.
+  const threatBadge = buildThreatBadge(item.threat);
+
   // Request count badge
   const countBadge = document.createElement('span');
   countBadge.className = 'row-count';
@@ -154,6 +196,7 @@ function buildDomainRow(item) {
 
   row.appendChild(flag);
   row.appendChild(info);
+  row.appendChild(threatBadge);
   row.appendChild(countBadge);
 
   return row;

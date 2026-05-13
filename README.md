@@ -17,6 +17,7 @@ When you visit a page, CookieSpy immediately shows you:
 - **Third-party cookies** — cookies from domains other than the current site
 - **External connections** — every external domain the page contacts, with request count
 - **IP geolocation** — each external domain's IP address, country, city, and organisation (ISP/CDN/cloud provider)
+- **Threat score** — each external domain is enriched with a 0–100 risk score from free, keyless threat-intel sources (see below)
 
 The toolbar badge updates live as the page loads additional resources, colour-coded by severity:
 
@@ -28,12 +29,32 @@ The toolbar badge updates live as the page loads additional resources, colour-co
 
 ---
 
+## Threat-intelligence scoring
+
+Every unique external domain is scored 0–100 by combining two independent, free, no-key sources:
+
+| Source | Signal | Weight |
+|--------|--------|--------|
+| [URLhaus](https://urlhaus.abuse.ch/) (abuse.ch) | Hostname appears in the URLhaus malware-distribution database | +60 |
+| Cloudflare malware DNS vs. Google DNS | Cloudflare's `security.cloudflare-dns.com` refuses the hostname while Google's plain resolver returns it | +40 |
+
+Scores map to popup colour bands: `0–19 safe (green)`, `20–49 caution (amber)`, `50–100 high risk (red)`. Hovering the score pill reveals which source(s) contributed.
+
+Each domain is queried at most once per service-worker lifetime — results are cached in memory only.
+
+---
+
 ## Privacy by design
 
 - **No storage** — all data is held in memory and cleared when you navigate away or close the tab
 - **No history** — nothing is written to `localStorage`, `chrome.storage`, or any external service
 - **Per-tab isolation** — each tab has independent state that never bleeds across tabs
-- **One external call** — geolocation uses `ipwho.is` (free HTTPS, no API key), queried once per unique domain with in-memory caching
+- **Limited external lookups** — for each *unique* external domain a tab contacts, CookieSpy makes up to four enrichment calls, all over HTTPS and all keyless:
+  - `ipwho.is` — IP geolocation
+  - `urlhaus-api.abuse.ch` — malware reputation
+  - `security.cloudflare-dns.com` — DNS-over-HTTPS (malware-filtering resolver)
+  - `dns.google` — DNS-over-HTTPS (plain resolver, used for comparison)
+- **No telemetry to Anthropic, the author, or anywhere else** — the only outbound calls are the four lookups above
 
 ---
 
@@ -44,6 +65,8 @@ The toolbar badge updates live as the page loads additional resources, colour-co
 - `chrome.webRequest` API — outbound request interception per tab
 - `chrome.webNavigation` API — navigation lifecycle management
 - `ipwho.is` — free geolocation API (HTTPS, no key required)
+- `urlhaus-api.abuse.ch` — free malware reputation API (HTTPS, no key required)
+- DNS-over-HTTPS to `security.cloudflare-dns.com` and `dns.google` — threat-intel signal via resolver comparison
 - Vanilla JS, zero dependencies
 
 ---

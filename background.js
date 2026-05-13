@@ -233,9 +233,14 @@ chrome.webRequest.onCompleted.addListener(
         location: null,
         flag: '\u{1F310}',
         org: null,
+        // threat starts undefined; the popup treats that as "checking..."
+        // until lookupThreat() resolves and applyThreat() fills it in.
+        threat: null,
       });
-      // Kick off async geo lookup for this new domain
+      // Fire both enrichment lookups in parallel. Each is best-effort,
+      // independently cached, and merges back into this entry when ready.
       lookupGeo(reqHost, details.tabId);
+      lookupThreat(reqHost, details.tabId);
     }
 
     notifyPopup(details.tabId);
@@ -281,6 +286,172 @@ function applyGeo(domain, tabId, info) {
   const entry = data.domains.get(domain);
   if (!entry) return;
   Object.assign(entry, info);
+  notifyPopup(tabId);
+}
+
+
+// --- Threat Intelligence - URLhaus + DNS comparison (free, no API keys) -----
+//
+// CookieSpy's threat scoring combines two independent, zero-config signals:
+//
+//   1. URLhaus (abuse.ch) - a community-maintained malware-distribution
+//      database. Domains hosting known malware are flagged. Free, no key.
+//
+//   2. DNS comparison - we resolve the domain via two DNS-over-HTTPS
+//      resolvers in parallel:
+//        * Cloudflare's malware-filtering resolver (security.cloudflare-dns.com)
+//        * Google's plain recursive resolver (dns.google)
+//      If Google resolves the domain but Cloudflare refuses it, that's a
+//      strong indication the domain appears on a major threat-intel feed.
+//
+// Each signal contributes independently to a 0-100 score. We deliberately
+// avoid API-key services for v1 so the extension stays drop-in for anyone
+// who installs it - no signup, no quotas to manage, no key to leak.
+
+/**
+ * Per-domain threat info cache. Lives only for the lifetime of the service
+ * worker, matching geoCache. Nothing is persisted to disk, in keeping with
+ * CookieSpy's no-storage privacy posture.
+ */
+const threatCache = new Map();
+
+/** Map a 0-100 score to a coarse level used by the popup for colour-coding. */
+function scoreToLevel(score) {
+  if (score >= 50) return 'high';
+  if (score >= 20) return 'caution';
+  return 'safe';
+}
+
+/**
+ * Query URLhaus for malware-distribution hits against a hostname.
+ * Returns { listed: bool, count: number } or null if the call failed.
+ */
+async function queryUrlhaus(domain) {
+  try {
+    const body = new URLSearchParams({ host: domain });
+    const res  = await fetch('https://urlhaus-api.abuse.ch/v1/host/', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal:  AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    // `query_status` is 'ok' when URLhaus has records, 'no_results' otherwise.
+    if (data.query_status === 'ok') {
+      return { listed: true, count: parseInt(data.url_count, 10) || 1 };
+    }
+    return { listed: false, count: 0 };
+  } catch {
+    return null; // network/timeout - treat as "no signal"
+  }
+}
+
+/**
+ * Resolve a domain via both a threat-filtering resolver and a plain one.
+ * Returns { filtered: bool } or null on error.
+ *
+ *   filtered === true  ->  Google resolves the domain but Cloudflare's
+ *                          security resolver refuses it. That's our signal.
+ */
+async function queryDnsBlock(domain) {
+  const dohFetch = (url) => fetch(url, {
+    headers: { 'Accept': 'application/dns-json' },
+    signal:  AbortSignal.timeout(3000),
+  }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+
+  const enc = encodeURIComponent(domain);
+  const [filtered, plain] = await Promise.all([
+    dohFetch(`https://security.cloudflare-dns.com/dns-query?name=${enc}&type=A`),
+    dohFetch(`https://dns.google/resolve?name=${enc}&type=A`),
+  ]);
+
+  if (!filtered || !plain) return null;
+
+  // DoH JSON: Status === 0 (NoError) and a non-empty Answer array means
+  // the resolver returned at least one A record.
+  const filteredResolved = filtered.Status === 0 && Array.isArray(filtered.Answer) && filtered.Answer.length > 0;
+  const plainResolved    = plain.Status    === 0 && Array.isArray(plain.Answer)    && plain.Answer.length    > 0;
+
+  // Only flag as filtered when Google has results AND Cloudflare doesn't.
+  // If both refuse, the domain simply doesn't exist - not a threat signal.
+  return { filtered: plainResolved && !filteredResolved };
+}
+
+/**
+ * Fuse URLhaus + DNS-block signals into a single 0-100 score and a level.
+ * Writes the result into the per-tab domain entry and notifies the popup.
+ *
+ * Scoring rubric (v1):
+ *   +60  URLhaus lists the host as serving malware
+ *   +40  Cloudflare's malware resolver refuses the host (Google resolves it)
+ *
+ * Maximum 100. If we couldn't reach any source we record an 'unknown' level
+ * so the popup can render a neutral indicator rather than a green badge.
+ */
+async function lookupThreat(domain, tabId) {
+  try {
+    if (threatCache.has(domain)) {
+      applyThreat(domain, tabId, threatCache.get(domain));
+      return;
+    }
+
+    const [urlhaus, dns] = await Promise.all([
+      queryUrlhaus(domain),
+      queryDnsBlock(domain),
+    ]);
+
+    // No data at all -> mark as unknown rather than implying "safe".
+    if (!urlhaus && !dns) {
+      const unknown = {
+        score:    0,
+        level:    'unknown',
+        sources:  [],
+        evidence: 'No threat-intel signal available',
+      };
+      threatCache.set(domain, unknown);
+      applyThreat(domain, tabId, unknown);
+      return;
+    }
+
+    let score = 0;
+    const sources = [];
+    const reasons = [];
+
+    if (urlhaus?.listed) {
+      score += 60;
+      sources.push('URLhaus');
+      reasons.push(`Listed by URLhaus (${urlhaus.count} URL${urlhaus.count !== 1 ? 's' : ''})`);
+    }
+    if (dns?.filtered) {
+      score += 40;
+      sources.push('Cloudflare');
+      reasons.push('Filtered by Cloudflare malware DNS');
+    }
+    if (reasons.length === 0) {
+      reasons.push('No threats detected on URLhaus or Cloudflare');
+    }
+
+    const info = {
+      score:    Math.min(score, 100),
+      level:    scoreToLevel(score),
+      sources,
+      evidence: reasons.join(' · '),
+    };
+
+    threatCache.set(domain, info);
+    applyThreat(domain, tabId, info);
+
+  } catch { /* swallow - threat intel is best-effort */ }
+}
+
+/** Merge a fresh threat-info object into the per-tab domain entry. */
+function applyThreat(domain, tabId, info) {
+  const data = tabData.get(tabId);
+  if (!data) return;
+  const entry = data.domains.get(domain);
+  if (!entry) return;
+  entry.threat = info;
   notifyPopup(tabId);
 }
 
