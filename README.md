@@ -18,7 +18,7 @@ When you visit a page, CookieSpy immediately shows you:
 - **External connections** — every external domain the page contacts, with request count
 - **IP geolocation** — each external domain's IP address, country, city, and organisation (ISP/CDN/cloud provider)
 - **Threat score** — each external domain is enriched with a 0–100 risk score from free, keyless threat-intel sources (see below)
-- **Auto-blocking with timed release** — domains scoring above 70 are automatically blocked, with a per-site "allow temporarily" escape hatch (see below)
+- **Auto-blocking with timed release** — domains scoring above 55 are automatically blocked, with a per-site "allow temporarily" escape hatch (see below)
 
 The toolbar badge updates live as the page loads additional resources, colour-coded by severity:
 
@@ -47,7 +47,7 @@ Each domain is queried at most once per service-worker lifetime — results are 
 
 ## Auto-blocking & timed release
 
-When a domain scores **above 70** — in practice, when *both* URLhaus and the Cloudflare DNS check flag it — CookieSpy automatically blocks it using a Manifest V3 `declarativeNetRequest` dynamic rule. The block is global: any page loading that domain as a third-party resource is protected.
+When a domain scores **above 55** — in practice, when URLhaus lists it as serving malware (with or without a corroborating Cloudflare DNS signal) — CookieSpy automatically blocks it using a Manifest V3 `declarativeNetRequest` dynamic rule. The block is global: any page loading that domain as a third-party resource is protected.
 
 Blocked domains still appear in the popup's External Connections list, marked with a red accent bar and a 🚫 status button. Because the block happens at the network layer, the request-count pill stops climbing — instead the status button shows how many requests have been *blocked* since the page loaded.
 

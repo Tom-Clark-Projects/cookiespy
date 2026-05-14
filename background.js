@@ -498,8 +498,12 @@ function applyThreat(domain, tabId, info) {
 // natively, alarms persist via chrome.alarms, and on SW startup
 // reconstructState() rebuilds the in-memory bookkeeping by reading them back.
 
-/** Score strictly above this triggers an auto-block. */
-const BLOCK_SCORE_THRESHOLD = 70;
+/**
+ * Score strictly above this triggers an auto-block. At 55, a single URLhaus
+ * malware hit (+60) is enough to block, while a Cloudflare-DNS-only signal
+ * (+40) is not - it takes a confirmed malware-distribution listing.
+ */
+const BLOCK_SCORE_THRESHOLD = 55;
 
 const RULE_PRIORITY_BLOCK = 1;
 const RULE_PRIORITY_ALLOW = 2;
