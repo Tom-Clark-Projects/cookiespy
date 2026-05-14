@@ -18,6 +18,7 @@ When you visit a page, CookieSpy immediately shows you:
 - **External connections** — every external domain the page contacts, with request count
 - **IP geolocation** — each external domain's IP address, country, city, and organisation (ISP/CDN/cloud provider)
 - **Threat score** — each external domain is enriched with a 0–100 risk score from free, keyless threat-intel sources (see below)
+- **Auto-blocking with timed release** — domains scoring above 70 are automatically blocked, with a per-site "allow temporarily" escape hatch (see below)
 
 The toolbar badge updates live as the page loads additional resources, colour-coded by severity:
 
@@ -44,11 +45,33 @@ Each domain is queried at most once per service-worker lifetime — results are 
 
 ---
 
+## Auto-blocking & timed release
+
+When a domain scores **above 70** — in practice, when *both* URLhaus and the Cloudflare DNS check flag it — CookieSpy automatically blocks it using a Manifest V3 `declarativeNetRequest` dynamic rule. The block is global: any page loading that domain as a third-party resource is protected.
+
+Blocked domains still appear in the popup's External Connections list, marked with a red accent bar and a 🚫 status button. Because the block happens at the network layer, the request-count pill stops climbing — instead the status button shows how many requests have been *blocked* since the page loaded.
+
+### Temporary per-site release
+
+Sometimes a blocked domain is breaking a login, payment, or embed you actually need. Click the 🚫 button on its row and choose how long to allow it **on the current site only**:
+
+| Option | Behaviour |
+|--------|-----------|
+| **10m** | Allowed for 10 minutes, then the block silently re-engages |
+| **1h** | Allowed for 1 hour, then the block silently re-engages |
+| **Until tab close** | Allowed until you close the tab or navigate away from the site |
+
+Timed allows are backed by `chrome.alarms`, so expiry is reliable even if the service worker has gone idle. The allow is scoped to the site's root domain via a higher-priority `allow` rule — releasing `google.com` on `msn.com` does **not** release it on `cnn.com`. An allowed domain shows a green accent bar and a ✓ status button with the remaining time; click it to revoke early.
+
+No other major content blocker offers timed, auto-reverting exceptions — they only do permanent allow-listing, which quietly erodes your protection over time.
+
+---
+
 ## Privacy by design
 
-- **No storage** — all data is held in memory and cleared when you navigate away or close the tab
-- **No history** — nothing is written to `localStorage`, `chrome.storage`, or any external service
-- **Per-tab isolation** — each tab has independent state that never bleeds across tabs
+- **No disk storage** — all tracking data is held in memory and cleared when you navigate away or close the tab; nothing is written to `localStorage` or `chrome.storage`
+- **Block rules are the one exception** — auto-block and timed-allow rules persist via Chrome's own `declarativeNetRequest` and `chrome.alarms` stores so they survive a service-worker restart. These hold only domain names and expiry timestamps, never browsing history, and Chrome clears them when the rules are removed
+- **Per-tab isolation** — each tab has independent tracking state that never bleeds across tabs
 - **Limited external lookups** — for each *unique* external domain a tab contacts, CookieSpy makes up to four enrichment calls, all over HTTPS and all keyless:
   - `ipwho.is` — IP geolocation
   - `urlhaus-api.abuse.ch` — malware reputation
@@ -62,8 +85,10 @@ Each domain is queried at most once per service-worker lifetime — results are 
 
 - **Manifest V3** (Chrome/Edge compatible)
 - `chrome.cookies` API — cookie enumeration and change events
-- `chrome.webRequest` API — outbound request interception per tab
+- `chrome.webRequest` API — outbound request interception per tab + blocked-attempt counting
 - `chrome.webNavigation` API — navigation lifecycle management
+- `chrome.declarativeNetRequest` API — dynamic block/allow rules for auto-blocking and timed release
+- `chrome.alarms` API — reliable expiry of timed allow rules even when the service worker is idle
 - `ipwho.is` — free geolocation API (HTTPS, no key required)
 - `urlhaus-api.abuse.ch` — free malware reputation API (HTTPS, no key required)
 - DNS-over-HTTPS to `security.cloudflare-dns.com` and `dns.google` — threat-intel signal via resolver comparison

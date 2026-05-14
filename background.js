@@ -147,8 +147,28 @@ function notifyPopup(tabId) {
 
 // --- Navigation - reset on new page load ------------------------------------
 
-chrome.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId }) => {
+chrome.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId, url }) => {
   if (frameId !== 0) return; // Only care about main frame
+
+  // If the user is navigating away from the site that owned a "tab-close"
+  // allow, revoke it before we discard the tab's state. We compare root
+  // domains so a sibling subdomain (m.msn.com vs www.msn.com) counts as
+  // staying on the same site.
+  const prev = tabData.get(tabId);
+  if (prev?.mainDomain) {
+    const prevRoot = getRootDomain(prev.mainDomain);
+    const nextRoot = getRootDomain(getHostname(url) || '');
+    if (prevRoot && prevRoot !== nextRoot) {
+      for (const allow of [...activeAllows.values()]) {
+        if (allow.mode === 'tab-close'
+            && allow.tabId === tabId
+            && allow.mainDomain === prevRoot) {
+          revokeAllow(allow.mainDomain, allow.blockedDomain);
+        }
+      }
+    }
+  }
+
   tabData.delete(tabId);
   // Clear badge + tooltip so the user sees a clean state during navigation
   paintIcon(tabId);
@@ -453,12 +473,277 @@ function applyThreat(domain, tabId, info) {
   if (!entry) return;
   entry.threat = info;
   notifyPopup(tabId);
+
+  // Auto-block if the score crosses the configured threshold. The block is
+  // global (any page loading this domain as a 3rd-party resource is affected);
+  // the user can release it on a per-site, time-limited basis from the popup.
+  if (info.score > BLOCK_SCORE_THRESHOLD) {
+    blockDomain(domain);
+  }
 }
+
+
+// --- Block / Allow engine - declarativeNetRequest dynamic rules -------------
+//
+// CookieSpy uses Chrome's declarativeNetRequest API to actually stop traffic
+// to high-risk domains, not just observe it. Two kinds of dynamic rules:
+//
+//   * BLOCK rules (priority 1):  match a request domain, refuse the request.
+//   * ALLOW  rules (priority 2): match request+initiator, override the block.
+//
+// The allow rule's higher priority means a timed exception trumps the global
+// block for one specific page, without disabling the block elsewhere.
+//
+// All state survives service-worker recycles: dynamic rules persist in Chrome
+// natively, alarms persist via chrome.alarms, and on SW startup
+// reconstructState() rebuilds the in-memory bookkeeping by reading them back.
+
+/** Score strictly above this triggers an auto-block. */
+const BLOCK_SCORE_THRESHOLD = 70;
+
+const RULE_PRIORITY_BLOCK = 1;
+const RULE_PRIORITY_ALLOW = 2;
+
+/**
+ * Resource types we'll block. We intentionally omit `main_frame` so a user
+ * directly navigating to a flagged URL isn't silently prevented from doing so
+ * - the scoring is about third-party resources, not page navigations.
+ *
+ * Only long-established resource types are listed: declarativeNetRequest
+ * rejects an entire rule if it contains a single unrecognised type, so the
+ * exotic newer values (webtransport, webbundle) are deliberately left out.
+ */
+const BLOCK_RESOURCE_TYPES = [
+  'sub_frame', 'stylesheet', 'script', 'image', 'font', 'object',
+  'xmlhttprequest', 'ping', 'csp_report', 'media', 'websocket', 'other',
+];
+
+/** Namespace prefix for our chrome.alarms entries. */
+const ALARM_PREFIX = 'cs-allow:';
+
+/** Maps blockedDomain -> dynamic rule id. */
+const blockedDomains = new Map();
+
+/**
+ * Maps "mainRoot::blockedDomain" -> {
+ *   ruleId, mainDomain, blockedDomain, mode, expiresAt, tabId
+ * }
+ * `mode` is 'timed' or 'tab-close'. `expiresAt` is a ms timestamp for timed
+ * allows, null for tab-close.
+ */
+const activeAllows = new Map();
+
+/** Monotonic counter for next dynamic-rule id; primed by reconstructState. */
+let nextRuleId = 1;
+
+function allowKey(mainRoot, blockedDomain) {
+  return `${mainRoot}::${blockedDomain}`;
+}
+
+function takeRuleId() {
+  return nextRuleId++;
+}
+
+/**
+ * Repaint every popup whose tab is currently looking at a domain whose
+ * block/allow state just changed.
+ */
+function notifyAllTabsForDomain(domain) {
+  for (const [tabId, data] of tabData.entries()) {
+    if (data.domains.has(domain)) notifyPopup(tabId);
+  }
+}
+
+/** Add a global block rule for a domain. Idempotent. */
+async function blockDomain(domain) {
+  if (blockedDomains.has(domain)) return;
+  const id = takeRuleId();
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      addRules: [{
+        id,
+        priority: RULE_PRIORITY_BLOCK,
+        action: { type: 'block' },
+        condition: {
+          requestDomains: [domain],
+          resourceTypes: BLOCK_RESOURCE_TYPES,
+        },
+      }],
+    });
+    blockedDomains.set(domain, id);
+    notifyAllTabsForDomain(domain);
+  } catch (e) {
+    console.error('CookieSpy: failed to add block rule for', domain, e);
+  }
+}
+
+/** Remove the global block rule for a domain. Idempotent. */
+async function unblockDomain(domain) {
+  const id = blockedDomains.get(domain);
+  if (id === undefined) return;
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [id],
+    });
+  } catch (e) {
+    console.error('CookieSpy: failed to remove block rule for', domain, e);
+  }
+  blockedDomains.delete(domain);
+  notifyAllTabsForDomain(domain);
+}
+
+/**
+ * Add a per-site allow rule that overrides the global block for one page.
+ * `mode` is 'timed' (durationMs required) or 'tab-close' (tabId required).
+ * Any previous allow for the same (mainRoot, blockedDomain) is replaced.
+ */
+async function allowDomain(mainDomain, blockedDomain, mode, durationMs, tabId) {
+  const mainRoot = getRootDomain(mainDomain) || mainDomain;
+  const key = allowKey(mainRoot, blockedDomain);
+
+  if (activeAllows.has(key)) {
+    await revokeAllow(mainDomain, blockedDomain);
+  }
+
+  const id = takeRuleId();
+  const expiresAt = mode === 'timed' ? Date.now() + durationMs : null;
+
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      addRules: [{
+        id,
+        priority: RULE_PRIORITY_ALLOW,
+        action: { type: 'allow' },
+        condition: {
+          requestDomains:  [blockedDomain],
+          initiatorDomains:[mainRoot],
+          resourceTypes:   BLOCK_RESOURCE_TYPES,
+        },
+      }],
+    });
+    activeAllows.set(key, {
+      ruleId: id, mainDomain: mainRoot, blockedDomain, mode, expiresAt, tabId: tabId ?? null,
+    });
+    if (mode === 'timed') {
+      chrome.alarms.create(ALARM_PREFIX + key, { when: expiresAt });
+    }
+    notifyAllTabsForDomain(blockedDomain);
+  } catch (e) {
+    console.error('CookieSpy: failed to add allow rule for', mainRoot, blockedDomain, e);
+  }
+}
+
+/** Remove an allow rule (re-instates the block for that site). */
+async function revokeAllow(mainDomain, blockedDomain) {
+  const mainRoot = getRootDomain(mainDomain) || mainDomain;
+  const key = allowKey(mainRoot, blockedDomain);
+  const allow = activeAllows.get(key);
+  if (!allow) return;
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [allow.ruleId],
+    });
+  } catch (e) {
+    console.error('CookieSpy: failed to remove allow rule for', mainRoot, blockedDomain, e);
+  }
+  activeAllows.delete(key);
+  chrome.alarms.clear(ALARM_PREFIX + key);
+  notifyAllTabsForDomain(blockedDomain);
+}
+
+/**
+ * Rebuild in-memory bookkeeping on service-worker startup by reading back
+ * the dynamic rules and alarms that Chrome persists for us. Rules without a
+ * matching alarm are treated as tab-close allows that have lost their tab
+ * binding (the SW recycled while the tab was open); they'll be cleaned up
+ * the next time the tab closes or the user navigates away.
+ */
+async function reconstructState() {
+  try {
+    const rules = await chrome.declarativeNetRequest.getDynamicRules();
+    let maxId = 0;
+    for (const rule of rules) {
+      maxId = Math.max(maxId, rule.id);
+      const req  = rule.condition?.requestDomains  || [];
+      const init = rule.condition?.initiatorDomains || [];
+      if (rule.action?.type === 'block' && req.length === 1) {
+        blockedDomains.set(req[0], rule.id);
+      } else if (rule.action?.type === 'allow' && req.length === 1 && init.length === 1) {
+        activeAllows.set(allowKey(init[0], req[0]), {
+          ruleId: rule.id, mainDomain: init[0], blockedDomain: req[0],
+          mode: 'unknown', expiresAt: null, tabId: null,
+        });
+      }
+    }
+    nextRuleId = maxId + 1;
+
+    const alarms = await chrome.alarms.getAll();
+    for (const a of alarms) {
+      if (!a.name.startsWith(ALARM_PREFIX)) continue;
+      const allow = activeAllows.get(a.name.slice(ALARM_PREFIX.length));
+      if (allow) {
+        allow.mode      = 'timed';
+        allow.expiresAt = a.scheduledTime;
+      }
+    }
+    for (const allow of activeAllows.values()) {
+      if (allow.mode === 'unknown') allow.mode = 'tab-close';
+    }
+  } catch (e) {
+    console.error('CookieSpy: reconstructState failed', e);
+  }
+}
+
+// Kick off state reconstruction immediately. The browser will re-invoke the
+// SW for any incoming event, but we want our maps populated as early as
+// possible so the popup never sees stale "not blocked" data.
+reconstructState();
+
+// Timed allows fire alarms on expiry; revoke and the block re-engages.
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (!alarm.name.startsWith(ALARM_PREFIX)) return;
+  const allow = activeAllows.get(alarm.name.slice(ALARM_PREFIX.length));
+  if (allow) revokeAllow(allow.mainDomain, allow.blockedDomain);
+});
+
+// Count blocked attempts so the popup can show "blocked 14 times" instead of
+// the count freezing. We only credit errors for domains WE are blocking -
+// network failures from other causes shouldn't inflate the figure.
+chrome.webRequest.onErrorOccurred.addListener(
+  (details) => {
+    if (!details.url.startsWith('http')) return;
+    const data = tabData.get(details.tabId);
+    if (!data || !data.mainDomain) return;
+    const reqHost = getHostname(details.url);
+    if (!reqHost || !blockedDomains.has(reqHost)) return;
+    const entry = data.domains.get(reqHost);
+    if (!entry) return;
+    entry.blockedAttempts = (entry.blockedAttempts || 0) + 1;
+    notifyPopup(details.tabId);
+  },
+  { urls: ['<all_urls>'] }
+);
 
 
 // --- Message handler - serves data to popup ---------------------------------
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // -- Allow-rule actions from the popup ----------------------------------
+  // These are fire-and-forget from the popup's perspective: it'll re-render
+  // off the dataChanged broadcast that notifyAllTabsForDomain triggers.
+  if (message.type === 'requestAllow') {
+    allowDomain(
+      message.mainDomain, message.blockedDomain,
+      message.mode, message.durationMs, message.tabId,
+    ).then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (message.type === 'revokeAllow') {
+    revokeAllow(message.mainDomain, message.blockedDomain)
+      .then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
   if (message.type !== 'getData') return false;
 
   const data = tabData.get(message.tabId);
@@ -472,14 +757,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const cookieSort = (a, b) =>
     a.name.localeCompare(b.name) || a.domain.localeCompare(b.domain);
 
+  // Decorate each domain entry with current block/allow state so the popup
+  // can render the right affordance without a second round-trip.
+  const mainRoot = getRootDomain(data.mainDomain) || data.mainDomain;
+  const decorate = ([domain, info]) => {
+    const allow = activeAllows.get(allowKey(mainRoot, domain));
+    return {
+      domain,
+      ...info,
+      blocked:         blockedDomains.has(domain),
+      blockedAttempts: info.blockedAttempts || 0,
+      allow: allow ? { mode: allow.mode, expiresAt: allow.expiresAt } : null,
+    };
+  };
+
   sendResponse({
     mainDomain: data.mainDomain,
     firstParty: Array.from(data.firstParty.values()).sort(cookieSort),
     thirdParty: Array.from(data.thirdParty.values()).sort(cookieSort),
-    domains: Array.from(data.domains.entries()).map(([domain, info]) => ({
-      domain,
-      ...info,
-    })).sort((a, b) => b.count - a.count), // Sort by request count desc
+    domains:    Array.from(data.domains.entries()).map(decorate)
+                  .sort((a, b) => b.count - a.count), // Sort by request count desc
   });
 
   return true; // Keep message channel open for async
@@ -490,6 +787,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabData.delete(tabId);
+  // Revoke any "until tab close" allows scoped to this tab.
+  for (const allow of [...activeAllows.values()]) {
+    if (allow.mode === 'tab-close' && allow.tabId === tabId) {
+      revokeAllow(allow.mainDomain, allow.blockedDomain);
+    }
+  }
 });
 
 

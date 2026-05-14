@@ -346,6 +346,99 @@ header {
   margin: 0 3px;
 }
 
+/* ─── Block / Allow state ──────────────────────────────────────────────────
+   A blocked domain gets a red accent bar; an allowed one gets a green bar.
+   The accent is an inset box-shadow so it doesn't disturb the grid layout.
+*/
+.domain-row.is-blocked {
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.domain-row.is-allowed {
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+/* Status button that lives under the domain name inside .row-info */
+.row-status {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: filter 0.15s;
+}
+
+.row-status:hover {
+  filter: brightness(1.25);
+}
+
+.row-status.is-blocked {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.row-status.is-allowed {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+/* ─── Allow menu (expands beneath a row) ───────────────────────────────────── */
+
+.allow-menu {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 9px 15px;
+  background: var(--bg-row);
+  border-bottom: 1px solid var(--border);
+}
+
+.allow-menu-label {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  margin-right: 2px;
+}
+
+.allow-option {
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--bg-card);
+  color: var(--brand-light);
+  border: 1px solid var(--border);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.allow-option:hover {
+  background: var(--bg-base);
+  border-color: var(--brand);
+}
+
+.allow-option.revoke {
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.allow-option.revoke:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: var(--red);
+}
+
 /* Request count badge */
 .row-count {
   flex-shrink: 0;

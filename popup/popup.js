@@ -32,6 +32,19 @@ const elStatCards     = document.querySelectorAll('.stat-card');
 let activeView = 'domains';
 let lastData   = null;
 
+/**
+ * Which domain (if any) currently has its allow-menu expanded. Tracked here
+ * so re-renders triggered by live data updates don't snap the menu shut.
+ */
+let expandedDomain = null;
+
+/** Allow-duration presets shown in the menu, in milliseconds. */
+const ALLOW_DURATIONS = [
+  { label: '10m', mode: 'timed',     durationMs: 10 * 60 * 1000 },
+  { label: '1h',  mode: 'timed',     durationMs: 60 * 60 * 1000 },
+  { label: 'Until tab close', mode: 'tab-close', durationMs: null },
+];
+
 /** Per-view configuration: section header text and empty-state copy. */
 const VIEW_CONFIG = {
   first: {
@@ -145,10 +158,64 @@ function buildThreatBadge(threat) {
   return pill;
 }
 
+/**
+ * Human-readable countdown for a timed allow. Rounds up to whole minutes so
+ * the user never sees "0m left" while the allow is technically still active.
+ */
+function formatExpiry(expiresAt) {
+  const ms = expiresAt - Date.now();
+  if (ms <= 0) return 'expiring';
+  const totalMin = Math.ceil(ms / 60000);
+  if (totalMin >= 60) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return m > 0 ? `${h}h ${m}m left` : `${h}h left`;
+  }
+  return `${totalMin}m left`;
+}
+
+/**
+ * Build the status button shown inside row-info when a domain is blocked or
+ * has an active allow. Clicking it expands the allow menu beneath the row.
+ * Returns null when the domain has no block/allow state.
+ */
+function buildRowStatus(item) {
+  if (!item.blocked && !item.allow) return null;
+
+  const btn = document.createElement('button');
+  btn.className = 'row-status';
+  btn.type = 'button';
+
+  if (item.allow) {
+    btn.classList.add('is-allowed');
+    const when = item.allow.mode === 'tab-close'
+      ? 'until tab close'
+      : formatExpiry(item.allow.expiresAt);
+    btn.textContent = `✓ Allowed · ${when}`;
+    btn.title = 'This domain is temporarily allowed on this site. Click to manage.';
+  } else {
+    btn.classList.add('is-blocked');
+    const attempts = item.blockedAttempts > 0
+      ? ` · ${item.blockedAttempts} blocked`
+      : '';
+    btn.textContent = `🚫 Blocked${attempts}`;
+    btn.title = 'This high-risk domain is blocked. Click to allow it temporarily on this site.';
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleAllowMenu(item.domain);
+  });
+  return btn;
+}
+
 /** Build a single domain row element */
 function buildDomainRow(item) {
   const row = document.createElement('div');
   row.className = 'domain-row';
+  row.dataset.domain = item.domain;
+  if (item.blocked && !item.allow) row.classList.add('is-blocked');
+  if (item.allow) row.classList.add('is-allowed');
 
   // Flag
   const flag = document.createElement('span');
@@ -185,6 +252,10 @@ function buildDomainRow(item) {
   info.appendChild(domainEl);
   info.appendChild(meta);
 
+  // Block/allow status button — only present for blocked or allowed domains.
+  const status = buildRowStatus(item);
+  if (status) info.appendChild(status);
+
   // Threat-score badge sits before the count so the eye lands on risk first.
   const threatBadge = buildThreatBadge(item.threat);
 
@@ -201,6 +272,89 @@ function buildDomainRow(item) {
   row.appendChild(countBadge);
 
   return row;
+}
+
+/**
+ * Build the expandable allow menu that drops in beneath a row. For a blocked
+ * domain it offers the timed-allow presets; for an already-allowed domain it
+ * offers a single Revoke action.
+ */
+function buildAllowMenu(item) {
+  const menu = document.createElement('div');
+  menu.className = 'allow-menu';
+  menu.dataset.domain = item.domain;
+
+  if (item.allow) {
+    const label = document.createElement('span');
+    label.className = 'allow-menu-label';
+    label.textContent = item.allow.mode === 'tab-close'
+      ? 'Allowed until this tab closes'
+      : `Allowed · ${formatExpiry(item.allow.expiresAt)}`;
+
+    const revoke = document.createElement('button');
+    revoke.className = 'allow-option revoke';
+    revoke.type = 'button';
+    revoke.textContent = 'Revoke now';
+    revoke.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sendRevoke(item.domain);
+    });
+
+    menu.appendChild(label);
+    menu.appendChild(revoke);
+  } else {
+    const label = document.createElement('span');
+    label.className = 'allow-menu-label';
+    label.textContent = 'Allow on this site for:';
+    menu.appendChild(label);
+
+    for (const preset of ALLOW_DURATIONS) {
+      const opt = document.createElement('button');
+      opt.className = 'allow-option';
+      opt.type = 'button';
+      opt.textContent = preset.label;
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sendAllow(item.domain, preset.mode, preset.durationMs);
+      });
+      menu.appendChild(opt);
+    }
+  }
+
+  return menu;
+}
+
+// ─── Allow-menu interaction ───────────────────────────────────────────────────
+
+/** Toggle the expanded allow-menu for a domain, then re-render. */
+function toggleAllowMenu(domain) {
+  expandedDomain = (expandedDomain === domain) ? null : domain;
+  renderActiveView();
+}
+
+/** Ask the background to add a timed (or tab-close) allow rule. */
+function sendAllow(blockedDomain, mode, durationMs) {
+  if (!lastData?.mainDomain || activeTabId === null) return;
+  chrome.runtime.sendMessage({
+    type:         'requestAllow',
+    mainDomain:   lastData.mainDomain,
+    blockedDomain,
+    mode,
+    durationMs:   mode === 'timed' ? durationMs : null,
+    tabId:        activeTabId,
+  });
+  expandedDomain = null; // collapse; the dataChanged broadcast will re-render
+}
+
+/** Ask the background to remove an allow rule (re-instating the block). */
+function sendRevoke(blockedDomain) {
+  if (!lastData?.mainDomain) return;
+  chrome.runtime.sendMessage({
+    type:       'revokeAllow',
+    mainDomain: lastData.mainDomain,
+    blockedDomain,
+  });
+  expandedDomain = null;
 }
 
 function escapeHtml(str) {
@@ -301,7 +455,24 @@ function renderActiveView() {
   const builder = activeView === 'domains' ? buildDomainRow : buildCookieRow;
   for (const item of list) {
     frag.appendChild(builder(item));
+
+    // For the domains view, drop the allow menu in directly beneath the row
+    // the user has expanded. Only blocked/allowed domains can be expanded.
+    if (activeView === 'domains'
+        && expandedDomain === item.domain
+        && (item.blocked || item.allow)) {
+      frag.appendChild(buildAllowMenu(item));
+    }
   }
+
+  // If the previously-expanded domain is no longer blocked/allowed (e.g. the
+  // allow we just requested cleared the block), drop the stale expand state.
+  if (expandedDomain) {
+    const still = list.some((d) =>
+      d.domain === expandedDomain && (d.blocked || d.allow));
+    if (!still) expandedDomain = null;
+  }
+
   elDomainList.appendChild(frag);
 }
 
