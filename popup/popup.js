@@ -559,3 +559,31 @@ chrome.runtime.onMessage.addListener((message) => {
     refresh();
   }
 });
+
+
+// ─── Hover Inspector toggle ───────────────────────────────────────────────────
+
+/*
+ * The toggle's state lives in chrome.storage.local under `inspectorEnabled`.
+ * Writing it there is all the popup has to do — the content script injected on
+ * every page watches chrome.storage.onChanged and enables/disables itself.
+ */
+const elInspectorSwitch = document.getElementById('inspector-switch');
+const elInspectorHint   = document.getElementById('inspector-hint');
+
+function reflectInspectorState(on) {
+  elInspectorSwitch.checked = on;
+  elInspectorHint.textContent = on
+    ? 'Hover page elements to inspect'
+    : 'Off — flip to inspect resources on the page';
+}
+
+chrome.storage.local.get('inspectorEnabled')
+  .then((r) => reflectInspectorState(!!r.inspectorEnabled))
+  .catch(() => reflectInspectorState(false));
+
+elInspectorSwitch.addEventListener('change', () => {
+  const on = elInspectorSwitch.checked;
+  chrome.storage.local.set({ inspectorEnabled: on });
+  reflectInspectorState(on);
+});

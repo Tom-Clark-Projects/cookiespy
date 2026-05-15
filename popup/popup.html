@@ -65,6 +65,19 @@
     <div id="domain-list" class="domain-list" role="tabpanel"></div>
   </section>
 
+  <!--
+    Hover Inspector toggle. Flipping this writes `inspectorEnabled` to
+    chrome.storage.local; the content script on every page reacts to that.
+  -->
+  <div class="inspector-bar">
+    <label class="inspector-toggle">
+      <input type="checkbox" id="inspector-switch" />
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      <span class="toggle-label">🔍 Hover Inspector</span>
+    </label>
+    <span class="inspector-hint" id="inspector-hint"></span>
+  </div>
+
   <!-- Footer -->
   <footer>
     <span class="footer-note">No data stored · Per-tab only</span>

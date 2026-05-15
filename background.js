@@ -841,6 +841,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // -- Hover inspector (content script) asks for a domain's threat score --
+  // Served straight from the in-memory threat cache; null if we haven't
+  // scored that domain yet (e.g. a first-party resource we never look up).
+  if (message.type === 'getThreat') {
+    sendResponse({ threat: threatCache.get(message.domain) || null });
+    return true;
+  }
+
   // -- Options-page self-test: validate the saved Auth-Key against URLhaus --
   // We query a benign host; any valid JSON response with a `query_status`
   // field proves the key is accepted. 401/403 means the key is wrong.

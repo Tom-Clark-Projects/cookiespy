@@ -19,6 +19,7 @@ When you visit a page, CookieSpy immediately shows you:
 - **IP geolocation** — each external domain's IP address, country, city, and organisation (ISP/CDN/cloud provider)
 - **Threat score** — each external domain is enriched with a 0–100 risk score from free, keyless threat-intel sources (see below)
 - **Auto-blocking with timed release** — domains scoring above 55 are automatically blocked, with a per-site "allow temporarily" escape hatch (see below)
+- **Hover inspector** — an opt-in mode that outlines resource elements on the page and shows what domain served them, on hover (see below)
 
 The toolbar badge updates live as the page loads additional resources, colour-coded by severity:
 
@@ -84,6 +85,23 @@ No other major content blocker offers timed, auto-reverting exceptions — they 
 
 ---
 
+## Hover inspector
+
+Flip the **🔍 Hover Inspector** toggle at the bottom of the popup and CookieSpy injects a lightweight on-page overlay. Hovering any *resource element* outlines it and shows a tooltip with:
+
+- the **domain** that served it
+- the **request type** — `script`, `image`, `iframe`, `media`, `stylesheet`, `object`, etc.
+- whether it's **first-party or third-party**, relative to the page's root domain
+- the **threat score**, pulled live from the background's cache
+
+The outline is colour-coded: blue for first-party, amber for third-party, red if the domain is high-risk.
+
+Scope is deliberately limited to genuine resource elements — `<img>`, `<script>`, `<iframe>`, `<video>`, `<audio>`, `<source>`, `<link>`, `<embed>`, `<object>` — because their source URL is right there in the DOM, so the attribution is honest. CookieSpy does **not** try to tell you which domain "served" an arbitrary `<button>` or `<div>`: once a script has run, that lineage isn't reliably recoverable from the DOM, and guessing would only produce confident-looking fiction.
+
+The toggle state is stored in `chrome.storage.local`; the content script is injected on every page but stays completely inert until you switch it on. Pages already open when you flip the toggle pick it up immediately; pages open from *before* the extension was installed or reloaded need a refresh first.
+
+---
+
 ## Privacy by design
 
 - **No browsing data on disk** — all tracking data (cookies, connections, scores) is held in memory and cleared when you navigate away or close the tab; no browsing history is ever written to `localStorage` or `chrome.storage`
@@ -108,7 +126,8 @@ No other major content blocker offers timed, auto-reverting exceptions — they 
 - `chrome.webNavigation` API — navigation lifecycle management
 - `chrome.declarativeNetRequest` API — dynamic block/allow rules for auto-blocking and timed release
 - `chrome.alarms` API — reliable expiry of timed allow rules even when the service worker is idle
-- `chrome.storage.local` API — persists the optional abuse.ch Auth-Key (configuration only)
+- `chrome.storage.local` API — persists the optional abuse.ch Auth-Key and the hover-inspector toggle
+- Content script — the hover inspector's on-page overlay, inert until toggled on
 - `ipwho.is` — free geolocation API (HTTPS, no key required)
 - `urlhaus-api.abuse.ch` — malware reputation API (HTTPS, requires a free Auth-Key — see *Threat-intelligence scoring*)
 - DNS-over-HTTPS to `security.cloudflare-dns.com` and `dns.google` — keyless threat-intel signal via resolver comparison
@@ -150,6 +169,8 @@ cookiespy-extension/
 │   ├── options.html       # Settings page — abuse.ch Auth-Key + self-test
 │   ├── options.css        # Dark-themed styles
 │   └── options.js         # Key storage & test-connection logic
+├── content/
+│   └── inspector.js       # Hover inspector — on-page resource overlay
 └── icons/
     ├── icon16.png
     ├── icon48.png

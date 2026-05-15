@@ -552,6 +552,86 @@ header {
 
 /* ─── Footer ───────────────────────────────────────────────────────────────── */
 
+/* ─── Hover Inspector toggle bar ───────────────────────────────────────────
+   Sits between the domain list and the footer. The switch is a plain checkbox
+   restyled into an iOS-style toggle so it stays keyboard-accessible.
+*/
+.inspector-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  flex-shrink: 0;
+}
+
+.inspector-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Hide the native checkbox but keep it focusable. */
+.inspector-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--bg-row);
+  border: 1px solid var(--border);
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.inspector-toggle input:checked + .toggle-track {
+  background: rgba(14, 165, 233, 0.25);
+  border-color: var(--brand);
+}
+
+.inspector-toggle input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(14px);
+  background: var(--brand-light);
+}
+
+.inspector-toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.toggle-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.inspector-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
 footer {
   display: flex;
   align-items: center;
