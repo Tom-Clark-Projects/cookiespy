@@ -375,10 +375,17 @@ function scoreToLevel(score) {
 /**
  * Query URLhaus for malware-distribution hits against a hostname.
  * Returns:
- *   { listed, count }              - lookup succeeded
- *   { error: 'no-key' }            - no Auth-Key configured, lookup skipped
- *   { error: 'unauthorized' }      - URLhaus rejected the Auth-Key
- *   null                           - network/timeout error
+ *   { listed, count, onlineCount }  - lookup succeeded
+ *   { error: 'no-key' }             - no Auth-Key configured, lookup skipped
+ *   { error: 'unauthorized' }       - URLhaus rejected the Auth-Key
+ *   null                            - network/timeout error
+ *
+ * `onlineCount` is the number of associated URLs still flagged `online`.
+ * This matters because URLhaus keeps *historical* records: a big legitimate
+ * host (e.g. www.google.com, abused once via an open-redirect URL) stays in
+ * the database forever even though those URLs are long dead. Scoring on
+ * "listed at all" would flag Google as malware; scoring on "has live URLs"
+ * does not.
  */
 async function queryUrlhaus(domain) {
   if (!urlhausAuthKey) return { error: 'no-key' };
@@ -399,9 +406,15 @@ async function queryUrlhaus(domain) {
     const data = await res.json();
     // `query_status` is 'ok' when URLhaus has records, 'no_results' otherwise.
     if (data.query_status === 'ok') {
-      return { listed: true, count: parseInt(data.url_count, 10) || 1 };
+      const urls = Array.isArray(data.urls) ? data.urls : [];
+      const onlineCount = urls.filter((u) => u.url_status === 'online').length;
+      return {
+        listed: true,
+        count:  parseInt(data.url_count, 10) || urls.length || 0,
+        onlineCount,
+      };
     }
-    return { listed: false, count: 0 };
+    return { listed: false, count: 0, onlineCount: 0 };
   } catch {
     return null; // network/timeout - treat as "no signal"
   }
@@ -442,8 +455,11 @@ async function queryDnsBlock(domain) {
  * Fuse URLhaus + DNS-block signals into a single 0-100 score and a level.
  * Writes the result into the per-tab domain entry and notifies the popup.
  *
- * Scoring rubric (v1):
- *   +60  URLhaus lists the host as serving malware
+ * Scoring rubric:
+ *   +60  URLhaus has at least one *currently online* malware URL for the host
+ *   +15  URLhaus lists the host but every URL is offline (historical only) -
+ *        kept low and inside the green "safe" band so legitimate hosts that
+ *        were abused once long ago aren't flagged as live threats
  *   +40  Cloudflare's malware resolver refuses the host (Google resolves it)
  *
  * Maximum 100. If we couldn't reach any source we record an 'unknown' level
@@ -500,9 +516,21 @@ async function lookupThreat(domain, tabId) {
     const reasons = [];
 
     if (urlhausUsable && urlhaus.listed) {
-      score += 60;
-      sources.push('URLhaus');
-      reasons.push(`Listed by URLhaus (${urlhaus.count} URL${urlhaus.count !== 1 ? 's' : ''})`);
+      if (urlhaus.onlineCount > 0) {
+        // Live threat: at least one malware URL on this host is still online.
+        score += 60;
+        sources.push('URLhaus');
+        reasons.push(
+          `URLhaus: ${urlhaus.onlineCount} active malware URL${urlhaus.onlineCount !== 1 ? 's' : ''}`);
+      } else {
+        // Historical only: the host is in URLhaus but every URL is offline.
+        // Common for big legit hosts abused once via open redirects. Worth
+        // noting in the tooltip, not worth alarming over - stays green.
+        score += 15;
+        sources.push('URLhaus (historical)');
+        reasons.push(
+          `URLhaus: ${urlhaus.count} historical URL${urlhaus.count !== 1 ? 's' : ''}, all offline`);
+      }
     }
     if (dns?.filtered) {
       score += 40;

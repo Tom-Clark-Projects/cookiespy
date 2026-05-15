@@ -36,8 +36,11 @@ Every unique external domain is scored 0–100 by combining two independent sour
 
 | Source | Signal | Weight |
 |--------|--------|--------|
-| [URLhaus](https://urlhaus.abuse.ch/) (abuse.ch) | Hostname appears in the URLhaus malware-distribution database | +60 |
+| [URLhaus](https://urlhaus.abuse.ch/) (abuse.ch) | Host has at least one **currently online** malware URL | +60 |
+| [URLhaus](https://urlhaus.abuse.ch/) (abuse.ch) | Host is listed but every malware URL is **offline** (historical only) | +15 |
 | Cloudflare malware DNS vs. Google DNS | Cloudflare's `security.cloudflare-dns.com` refuses the hostname while Google's plain resolver returns it | +40 |
+
+The online/offline distinction matters: URLhaus keeps historical records forever, so large legitimate hosts (e.g. `www.google.com`, abused once via an open-redirect URL) stay in the database indefinitely. Scoring those as live threats would be a false positive, so a host with only offline URLs gets a low +15 that stays inside the green "safe" band.
 
 Scores map to popup colour bands: `0–19 safe (green)`, `20–49 caution (amber)`, `50–100 high risk (red)`. Hovering the score pill reveals which source(s) contributed.
 
@@ -61,7 +64,7 @@ Scores are mostly `0` on normal browsing — legitimate CDNs and analytics domai
 
 ## Auto-blocking & timed release
 
-When a domain scores **above 55** — in practice, when URLhaus lists it as serving malware (with or without a corroborating Cloudflare DNS signal) — CookieSpy automatically blocks it using a Manifest V3 `declarativeNetRequest` dynamic rule. The block is global: any page loading that domain as a third-party resource is protected.
+When a domain scores **above 55** — in practice, when URLhaus has a *currently online* malware URL for it (with or without a corroborating Cloudflare DNS signal) — CookieSpy automatically blocks it using a Manifest V3 `declarativeNetRequest` dynamic rule. Historical-only listings (+15) and a lone Cloudflare DNS signal (+40) stay below the threshold and are flagged but not blocked. The block is global: any page loading that domain as a third-party resource is protected.
 
 Blocked domains still appear in the popup's External Connections list, marked with a red accent bar and a 🚫 status button. Because the block happens at the network layer, the request-count pill stops climbing — instead the status button shows how many requests have been *blocked* since the page loaded.
 
