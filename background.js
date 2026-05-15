@@ -310,12 +310,14 @@ function applyGeo(domain, tabId, info) {
 }
 
 
-// --- Threat Intelligence - URLhaus + DNS comparison (free, no API keys) -----
+// --- Threat Intelligence - URLhaus + DNS comparison -------------------------
 //
-// CookieSpy's threat scoring combines two independent, zero-config signals:
+// CookieSpy's threat scoring combines two independent signals:
 //
 //   1. URLhaus (abuse.ch) - a community-maintained malware-distribution
-//      database. Domains hosting known malware are flagged. Free, no key.
+//      database. As of 2024 abuse.ch requires a free Auth-Key for API
+//      access, configured on the options page. Without a key this signal
+//      is simply skipped (the extension still works on the DNS check alone).
 //
 //   2. DNS comparison - we resolve the domain via two DNS-over-HTTPS
 //      resolvers in parallel:
@@ -324,16 +326,44 @@ function applyGeo(domain, tabId, info) {
 //      If Google resolves the domain but Cloudflare refuses it, that's a
 //      strong indication the domain appears on a major threat-intel feed.
 //
-// Each signal contributes independently to a 0-100 score. We deliberately
-// avoid API-key services for v1 so the extension stays drop-in for anyone
-// who installs it - no signup, no quotas to manage, no key to leak.
+// Each signal contributes independently to a 0-100 score.
 
 /**
  * Per-domain threat info cache. Lives only for the lifetime of the service
- * worker, matching geoCache. Nothing is persisted to disk, in keeping with
- * CookieSpy's no-storage privacy posture.
+ * worker, matching geoCache.
  */
 const threatCache = new Map();
+
+/**
+ * The user's abuse.ch Auth-Key, mirrored from chrome.storage.local. Empty
+ * string means "not configured" - URLhaus lookups are skipped in that case.
+ * This is the one piece of state CookieSpy persists to disk, and it is
+ * user-supplied configuration, never browsing data.
+ */
+let urlhausAuthKey = '';
+
+// Prime the key on startup, then keep it live. Changing the key invalidates
+// the threat cache so already-seen domains get re-scored with the new key.
+chrome.storage.local.get('urlhausAuthKey').then((r) => {
+  urlhausAuthKey = r.urlhausAuthKey || '';
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.urlhausAuthKey) {
+    urlhausAuthKey = changes.urlhausAuthKey.newValue || '';
+    threatCache.clear();
+  }
+});
+
+/**
+ * Built-in self-test hosts. Any domain matching one of these is forced to a
+ * maximum score regardless of the live lookups, so the user can exercise the
+ * full block / timed-allow UI without having to find a real malicious site.
+ * `testsafebrowsing.appspot.com` is Google's long-standing safe-browsing
+ * test host - harmless, but unmistakably "should be flagged".
+ */
+const SELF_TEST_DOMAINS = new Set([
+  'testsafebrowsing.appspot.com',
+]);
 
 /** Map a 0-100 score to a coarse level used by the popup for colour-coding. */
 function scoreToLevel(score) {
@@ -344,17 +374,27 @@ function scoreToLevel(score) {
 
 /**
  * Query URLhaus for malware-distribution hits against a hostname.
- * Returns { listed: bool, count: number } or null if the call failed.
+ * Returns:
+ *   { listed, count }              - lookup succeeded
+ *   { error: 'no-key' }            - no Auth-Key configured, lookup skipped
+ *   { error: 'unauthorized' }      - URLhaus rejected the Auth-Key
+ *   null                           - network/timeout error
  */
 async function queryUrlhaus(domain) {
+  if (!urlhausAuthKey) return { error: 'no-key' };
   try {
     const body = new URLSearchParams({ host: domain });
     const res  = await fetch('https://urlhaus-api.abuse.ch/v1/host/', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Auth-Key':     urlhausAuthKey,
+      },
       body,
       signal:  AbortSignal.timeout(4000),
     });
+    // 401/403 mean the key is missing or wrong - distinct from a network fail.
+    if (res.status === 401 || res.status === 403) return { error: 'unauthorized' };
     if (!res.ok) return null;
     const data = await res.json();
     // `query_status` is 'ok' when URLhaus has records, 'no_results' otherwise.
@@ -416,18 +456,39 @@ async function lookupThreat(domain, tabId) {
       return;
     }
 
+    // Self-test hosts short-circuit to a max score so the user can verify
+    // the whole discover -> score -> block -> allow pipeline on demand.
+    if (SELF_TEST_DOMAINS.has(domain)) {
+      const testInfo = {
+        score:    100,
+        level:    'high',
+        sources:  ['CookieSpy self-test'],
+        evidence: 'Built-in self-test entry — not a real threat',
+      };
+      threatCache.set(domain, testInfo);
+      applyThreat(domain, tabId, testInfo);
+      return;
+    }
+
     const [urlhaus, dns] = await Promise.all([
       queryUrlhaus(domain),
       queryDnsBlock(domain),
     ]);
 
-    // No data at all -> mark as unknown rather than implying "safe".
-    if (!urlhaus && !dns) {
+    // Did URLhaus actually produce a usable verdict? `{ error: ... }` and
+    // `null` both mean "no signal" - only a listed/not-listed object counts.
+    const urlhausUsable = urlhaus && !urlhaus.error;
+    const dnsUsable     = !!dns;
+
+    // No usable data from either source -> 'unknown' rather than implying safe.
+    if (!urlhausUsable && !dnsUsable) {
       const unknown = {
         score:    0,
         level:    'unknown',
         sources:  [],
-        evidence: 'No threat-intel signal available',
+        evidence: urlhaus?.error === 'no-key'
+          ? 'URLhaus needs an Auth-Key (Settings) · DNS check unavailable'
+          : 'No threat-intel signal available',
       };
       threatCache.set(domain, unknown);
       applyThreat(domain, tabId, unknown);
@@ -438,7 +499,7 @@ async function lookupThreat(domain, tabId) {
     const sources = [];
     const reasons = [];
 
-    if (urlhaus?.listed) {
+    if (urlhausUsable && urlhaus.listed) {
       score += 60;
       sources.push('URLhaus');
       reasons.push(`Listed by URLhaus (${urlhaus.count} URL${urlhaus.count !== 1 ? 's' : ''})`);
@@ -449,7 +510,11 @@ async function lookupThreat(domain, tabId) {
       reasons.push('Filtered by Cloudflare malware DNS');
     }
     if (reasons.length === 0) {
-      reasons.push('No threats detected on URLhaus or Cloudflare');
+      // Nothing flagged it. Note when URLhaus was skipped so a green 0 on a
+      // keyless install isn't mistaken for a full all-clear.
+      reasons.push(urlhausUsable
+        ? 'No threats detected on URLhaus or Cloudflare'
+        : 'No threats on Cloudflare DNS · URLhaus skipped (no Auth-Key)');
     }
 
     const info = {
@@ -748,6 +813,42 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // -- Options-page self-test: validate the saved Auth-Key against URLhaus --
+  // We query a benign host; any valid JSON response with a `query_status`
+  // field proves the key is accepted. 401/403 means the key is wrong.
+  if (message.type === 'selfTest') {
+    (async () => {
+      if (!urlhausAuthKey) {
+        sendResponse({ result: 'no-key' });
+        return;
+      }
+      try {
+        const res = await fetch('https://urlhaus-api.abuse.ch/v1/host/', {
+          method:  'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Auth-Key':     urlhausAuthKey,
+          },
+          body:    new URLSearchParams({ host: 'example.com' }),
+          signal:  AbortSignal.timeout(6000),
+        });
+        if (res.status === 401 || res.status === 403) {
+          sendResponse({ result: 'unauthorized' });
+          return;
+        }
+        if (!res.ok) {
+          sendResponse({ result: 'network', detail: `HTTP ${res.status}` });
+          return;
+        }
+        const data = await res.json();
+        sendResponse({ result: 'ok', detail: `query_status: ${data.query_status}` });
+      } catch (e) {
+        sendResponse({ result: 'network', detail: String(e?.message || e) });
+      }
+    })();
+    return true; // async sendResponse
+  }
+
   if (message.type !== 'getData') return false;
 
   const data = tabData.get(message.tabId);
@@ -781,6 +882,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     thirdParty: Array.from(data.thirdParty.values()).sort(cookieSort),
     domains:    Array.from(data.domains.entries()).map(decorate)
                   .sort((a, b) => b.count - a.count), // Sort by request count desc
+    // Lets the popup nudge the user toward Settings when the strongest
+    // threat-intel source is switched off for want of an Auth-Key.
+    urlhausEnabled: !!urlhausAuthKey,
   });
 
   return true; // Keep message channel open for async

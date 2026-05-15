@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CookieSpy — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+
+  <main class="card">
+
+    <header class="card-header">
+      <div class="logo">
+        <img src="../icons/icon48.png" alt="" width="28" height="28" />
+        <span class="logo-text">Cookie<span class="logo-accent">Spy</span></span>
+      </div>
+      <span class="card-subtitle">Settings</span>
+    </header>
+
+    <!-- ─── URLhaus Auth-Key ─────────────────────────────────────────────── -->
+    <section class="setting">
+      <h2 class="setting-title">URLhaus threat intelligence</h2>
+      <p class="setting-desc">
+        URLhaus (by abuse.ch) is CookieSpy's strongest malware-domain signal.
+        As of 2024 it requires a free Auth-Key. Without one, scoring still
+        runs on the keyless DNS checks alone — but it catches far less.
+      </p>
+      <p class="setting-desc">
+        Get a key in about two minutes: sign in at
+        <a href="https://auth.abuse.ch/" target="_blank" rel="noopener">auth.abuse.ch</a>
+        with Google/GitHub/X/LinkedIn, then create an Auth-Key under the
+        "Optional" section and paste it below.
+      </p>
+
+      <label class="field-label" for="auth-key">abuse.ch Auth-Key</label>
+      <div class="field-row">
+        <input
+          type="password"
+          id="auth-key"
+          class="field-input"
+          placeholder="Paste your Auth-Key here"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="button" id="toggle-visibility" class="btn btn-ghost" title="Show / hide key">👁</button>
+      </div>
+
+      <div class="button-row">
+        <button type="button" id="save-key" class="btn btn-primary">Save</button>
+        <button type="button" id="test-key" class="btn btn-secondary">Test threat scoring</button>
+        <button type="button" id="clear-key" class="btn btn-ghost">Clear</button>
+      </div>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </section>
+
+    <!-- ─── Self-test info ──────────────────────────────────────────────── -->
+    <section class="setting">
+      <h2 class="setting-title">Verifying the block UI</h2>
+      <p class="setting-desc">
+        To see the auto-block and timed-release UI without hunting for a real
+        malicious site, visit
+        <a href="https://testsafebrowsing.appspot.com/" target="_blank" rel="noopener">testsafebrowsing.appspot.com</a>.
+        CookieSpy treats that host as a built-in self-test entry and scores it
+        100, so it will appear blocked in the popup with the full allow menu.
+      </p>
+    </section>
+
+    <footer class="card-footer">
+      <span>No data stored · Per-tab only</span>
+      <a href="https://cloudsecurity.global" target="_blank" rel="noopener">cloudsecurity.global</a>
+    </footer>
+
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

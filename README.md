@@ -32,7 +32,7 @@ The toolbar badge updates live as the page loads additional resources, colour-co
 
 ## Threat-intelligence scoring
 
-Every unique external domain is scored 0–100 by combining two independent, free, no-key sources:
+Every unique external domain is scored 0–100 by combining two independent sources:
 
 | Source | Signal | Weight |
 |--------|--------|--------|
@@ -42,6 +42,20 @@ Every unique external domain is scored 0–100 by combining two independent, fre
 Scores map to popup colour bands: `0–19 safe (green)`, `20–49 caution (amber)`, `50–100 high risk (red)`. Hovering the score pill reveals which source(s) contributed.
 
 Each domain is queried at most once per service-worker lifetime — results are cached in memory only.
+
+### URLhaus needs a free Auth-Key
+
+As of 2024, abuse.ch requires a free **Auth-Key** to query the URLhaus API. CookieSpy ships without one, so out of the box only the keyless Cloudflare-vs-Google DNS check is active — which catches far fewer threats. To enable the stronger URLhaus signal:
+
+1. Open CookieSpy's **Settings** (right-click the toolbar icon → *Options*, or click the in-popup hint).
+2. Follow the link to [auth.abuse.ch](https://auth.abuse.ch/), sign in with Google/GitHub/X/LinkedIn, and create an Auth-Key under the "Optional" section.
+3. Paste the key into Settings, click **Save**, then **Test threat scoring** to confirm it's accepted.
+
+The key is stored in `chrome.storage.local` (see *Privacy by design*). Until one is set, the popup shows a one-line hint above the domains list.
+
+### Verifying it works
+
+Scores are mostly `0` on normal browsing — legitimate CDNs and analytics domains genuinely *are* clean, so that's expected. To exercise the full pipeline on demand, visit [`testsafebrowsing.appspot.com`](https://testsafebrowsing.appspot.com/): CookieSpy treats that host as a built-in self-test entry and forces it to score 100, so it appears blocked with the complete timed-allow UI.
 
 ---
 
@@ -69,15 +83,17 @@ No other major content blocker offers timed, auto-reverting exceptions — they 
 
 ## Privacy by design
 
-- **No disk storage** — all tracking data is held in memory and cleared when you navigate away or close the tab; nothing is written to `localStorage` or `chrome.storage`
-- **Block rules are the one exception** — auto-block and timed-allow rules persist via Chrome's own `declarativeNetRequest` and `chrome.alarms` stores so they survive a service-worker restart. These hold only domain names and expiry timestamps, never browsing history, and Chrome clears them when the rules are removed
+- **No browsing data on disk** — all tracking data (cookies, connections, scores) is held in memory and cleared when you navigate away or close the tab; no browsing history is ever written to `localStorage` or `chrome.storage`
+- **Two persisted exceptions, neither is browsing history:**
+  - Auto-block and timed-allow rules persist via Chrome's own `declarativeNetRequest` and `chrome.alarms` stores so they survive a service-worker restart. They hold only domain names and expiry timestamps, and Chrome clears them when the rules are removed.
+  - Your abuse.ch Auth-Key, if you set one, is saved in `chrome.storage.local`. It is user-supplied configuration — a credential you chose to add — not data CookieSpy collected about you.
 - **Per-tab isolation** — each tab has independent tracking state that never bleeds across tabs
-- **Limited external lookups** — for each *unique* external domain a tab contacts, CookieSpy makes up to four enrichment calls, all over HTTPS and all keyless:
-  - `ipwho.is` — IP geolocation
-  - `urlhaus-api.abuse.ch` — malware reputation
-  - `security.cloudflare-dns.com` — DNS-over-HTTPS (malware-filtering resolver)
-  - `dns.google` — DNS-over-HTTPS (plain resolver, used for comparison)
-- **No telemetry to Anthropic, the author, or anywhere else** — the only outbound calls are the four lookups above
+- **Limited external lookups** — for each *unique* external domain a tab contacts, CookieSpy makes up to four enrichment calls, all over HTTPS:
+  - `ipwho.is` — IP geolocation (keyless)
+  - `urlhaus-api.abuse.ch` — malware reputation (only if you've configured an Auth-Key)
+  - `security.cloudflare-dns.com` — DNS-over-HTTPS (malware-filtering resolver, keyless)
+  - `dns.google` — DNS-over-HTTPS (plain resolver, used for comparison, keyless)
+- **No telemetry to Anthropic, the author, or anywhere else** — the only outbound calls are the lookups above
 
 ---
 
@@ -89,9 +105,10 @@ No other major content blocker offers timed, auto-reverting exceptions — they 
 - `chrome.webNavigation` API — navigation lifecycle management
 - `chrome.declarativeNetRequest` API — dynamic block/allow rules for auto-blocking and timed release
 - `chrome.alarms` API — reliable expiry of timed allow rules even when the service worker is idle
+- `chrome.storage.local` API — persists the optional abuse.ch Auth-Key (configuration only)
 - `ipwho.is` — free geolocation API (HTTPS, no key required)
-- `urlhaus-api.abuse.ch` — free malware reputation API (HTTPS, no key required)
-- DNS-over-HTTPS to `security.cloudflare-dns.com` and `dns.google` — threat-intel signal via resolver comparison
+- `urlhaus-api.abuse.ch` — malware reputation API (HTTPS, requires a free Auth-Key — see *Threat-intelligence scoring*)
+- DNS-over-HTTPS to `security.cloudflare-dns.com` and `dns.google` — keyless threat-intel signal via resolver comparison
 - Vanilla JS, zero dependencies
 
 ---
@@ -121,11 +138,15 @@ CookieSpy is a sideloaded developer extension — no Chrome Web Store required.
 ```
 cookiespy-extension/
 ├── manifest.json          # MV3 extension manifest
-├── background.js          # Service worker — tracking logic, badge, geo lookup
+├── background.js          # Service worker — tracking, scoring, block/allow rules
 ├── popup/
 │   ├── popup.html         # Extension popup UI
 │   ├── popup.css          # Dark-themed styles
 │   └── popup.js           # Popup data fetch & live rendering
+├── options/
+│   ├── options.html       # Settings page — abuse.ch Auth-Key + self-test
+│   ├── options.css        # Dark-themed styles
+│   └── options.js         # Key storage & test-connection logic
 └── icons/
     ├── icon16.png
     ├── icon48.png

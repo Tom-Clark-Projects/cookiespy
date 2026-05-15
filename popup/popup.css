@@ -258,6 +258,37 @@ header {
   border-radius: 2px;
 }
 
+/* ─── URLhaus "no Auth-Key" hint ───────────────────────────────────────────
+   Shown at the top of the domains list when URLhaus scoring is disabled.
+   Styled as a full-width clickable banner that opens the options page.
+*/
+.urlhaus-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.1);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.urlhaus-hint:hover {
+  background: rgba(245, 158, 11, 0.18);
+}
+
+.urlhaus-hint-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
 /* ─── Empty State ──────────────────────────────────────────────────────────── */
 
 .empty-state {

@@ -440,6 +440,22 @@ function renderActiveView() {
 
   elDomainList.innerHTML = '';
 
+  // In the domains view, nudge the user toward Settings when URLhaus scoring
+  // is disabled — otherwise an all-zero score column looks broken rather than
+  // "the strongest source just isn't switched on".
+  if (activeView === 'domains' && lastData.urlhausEnabled === false) {
+    const hint = document.createElement('button');
+    hint.className = 'urlhaus-hint';
+    hint.type = 'button';
+    hint.title = 'Open CookieSpy settings';
+    hint.innerHTML = `
+      <span class="urlhaus-hint-icon">⚙</span>
+      <span>URLhaus scoring is off — add a free Auth-Key in Settings for full threat detection</span>
+    `;
+    hint.addEventListener('click', () => chrome.runtime.openOptionsPage());
+    elDomainList.appendChild(hint);
+  }
+
   if (list.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
